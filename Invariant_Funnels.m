@@ -11,113 +11,115 @@
 % --------------------------------------------------------------------------------
 % record of modify :
 % date          version     name         content
-% 2016/4/26     1.00                     build
+% 2016/4/26     1.00        dengwei      build
+% 2016/11/11    2.00        dengwei      add sample-based ROA
 % </PRE>
 % ********************************************************************************
 %
 % * right(c)
 %
 % *************************************************************************
-% input:
+% input:xx:nominal trajectory state,u0:nominal open loop
+% control;Maxinterval:max time
 %
 % output:
 % *************************************************************************
-function [rho0, Ppp, upp, K0] = Invariant_Funnels(f0,xx,u0,Maxinterval)
-global INPUTS
-Q = INPUTS.Q(1);
-R = INPUTS.R(1);
-n = length(xx(0)); m = length(u0(0));
+function [Vtrim, sys] = Invariant_Funnels(sys)
 
-%% Guessian guess programming
-% xT = [INPUTS.limit_x1_min+(INPUTS.limit_x1_max-INPUTS.limit_x1_min)*rand(1)
-%       INPUTS.limit_x2_min+(INPUTS.limit_x2_max-INPUTS.limit_x2_min)*rand(1)
-%       INPUTS.limit_x3_min+(INPUTS.limit_x3_max-INPUTS.limit_x3_min)*rand(1)
-%       INPUTS.limit_x4_min+(INPUTS.limit_x4_max-INPUTS.limit_x4_min)*rand(1)];
-% uT = xT(4);
+INPUTS = sys.INPUTS;
 
-% Maxinterval = [0 max(taus)]; % cost time
-[A,B] = tv_poly_linearize(f0,xx,u0);
-Qf = 10*Q;
-[ts,Ss] = tv_lqr_riccati(Maxinterval,A,B,INPUTS.Q,INPUTS.R,Qf);
-Spp = spline(ts,Ss);
-S = @(t) ppval(Spp,t);
-K = @(t) inv(INPUTS.R(t))*B(t)'*S(t);
-Ac = @(t) A(t) - B(t)*K(t);
-Q0  = @(t) (INPUTS.Q(t) + S(t)*B(t)*inv(INPUTS.R(t))*B(t)'*S(t));
-% xT is the center of the goal region.
-% S0 defines the goal region (x-xT)'S0(x-xT) < = 1.
-% We use an estimate of the  basin of attraction for infinite horizon LQR, but choose your own.
-[taus1,Ps] = tv_lyapunov(Maxinterval,@(t) Ac(t),Q0,Qf);
-taus = flipud(taus1);
-N = length(taus);
-Ppp = interp1(taus,reshape(permute(Ps,[3 1 2]),N,n*n),'linear', 'pp');
-upp = spline(taus,u0(taus'));
-% 
-% integral the state with feedback
-state(:,1) = xx(0);
-stateOL(:,1) = xx(0);
-for i = 1:length(taus)-1
-    [~,state1] = ode45(@(t,x)f0(t,x,u0(t)-K(t)*(state(:,i)-xx(taus(i)))),taus(i:i+1),state(:,i));
-    [~,stateOL1] = ode45(@(t,x)f0(t,x,u0(t)),taus(i:i+1),stateOL(:,i));
-    state(:,i+1) = state1(end,:)';
-    stateOL(:,i+1) = stateOL1(end,:)';
-    Ufeedback1(i,:) = u0(taus(i))-K(taus(i))*(state(:,i)-xx(taus(i)));
+if 0
+    load('my_testdata.mat')
+else
+    % use spot package calculate the funnel in msspoly variable
+    t = msspoly('t');
+    u = msspoly('u',sys.getNumInput);
+    x = msspoly('x',sys.getNumStates);
+    sys.p_t = t;
+    sys.p_u = u;
+    sys.p_x = x;
+    %% ============linearlize the system near every points ===========
+    sys = sys.timecalculation(50);% calcluate the time points
+    taus = sys.breaks;
+    sys = sys.tv_poly_linearize; % linearize the sys
+    A = sys.A;
+    B = sys.B;
+    Qf = diag([1 1 10 10]); % this is must smaller than ROA
+    % compute the region of attraction for target aero
+    % V = regionOfAttraction_levelSetMethodYalmip(Qf)
+    
+    %% ===================time-varying Riccati equation=================
+    [tv,Ss] = tv_lqr_riccati(sys.Maxinterval,A,B,INPUTS.Q,INPUTS.R,Qf);
+    Spp = spline(tv,Ss);
+    S = @(t) ppval(Spp,t);
+    K = @(t) -inv(INPUTS.R(t))*B(t)'*S(t);
+    sys.K = K;          % time varying feedback gain for local equilibrium
+    %         Ac = @(t) A(t) + B(t)*K(t);
+    %         Q0  = @(t) (INPUTS.Q(t) + S(t)*B(t)*inv(INPUTS.R(t))*B(t)'*S(t));
+    %% ===============lypunove function===================
+    % xT is the center of the goal region.
+    % S0 defines the goal region (x-xT)'S0(x-xT) < = 1.
+    % We use an estimate of the  basin of attraction for infinite horizon LQR, but choose your own.
+    %         [taus1,Pstv] = tv_lyapunov(sys.Maxinterval,@(t)Ac(t),Q0,Qf);
+    %         taus2 = flipud(taus1);
+    %         Pstv0 = flip(Pstv,3);
+    %         Pmes = spline(taus2,Pstv0); % x-x0 is expand to feedback
+    
 end
-Ufeedback1(i+1,:) = u0(taus(i+1))-K(taus(i+1))*(state(:,i+1)-xx(taus(i+1)));
-Ufeedback0 = spline(taus,Ufeedback1');
-Ufeedback = @(t) ppval(Ufeedback0,t);
-figure(1)
-plot(state(1,:),state(2,:),'*b')
-hold on 
-plot(stateOL(1,:),stateOL(2,:),'k')
-% feedback control and real state
-xpp = spline(taus,state);
-upp = spline(taus,Ufeedback(taus));
+%% =======create funnel Lyapunov function ============
+V = V_function(sys.p_t,sys.p_x,Spp,taus);
 
-% rou = GMPLdatabase();
-% Pp = @(t) ppval(Ppp,t);
-% Up = @(t) ppval(upp,t);
+%% Options for funnel computation
+options = struct();
+options.n = sys.getNumStates;               % demination of state
+options.m = sys.getNumInput;                % demination of control
+options.rho0_tau = 10;                      % Determine initial guess for rho
+options.max_iterations = 6;                 % Maximum number of iterations to run for
+options.stability = false;                  % true implies that we want exponential stability
+options.converged_tol = 1e-3;               % Tolerance for checking convergence
+options.lyap_parameterization = 'rho';      % Lyapunov upper symbol
+options.rho0 = 1;                           % Initial "guessed" rho
 
-% GMPLprogama
-% S0 = 1.01*S0/rho0;
-
-%% ================ellipsoid calculate============================
-Max_t = length(taus); % time step
-ts = flipud(taus);
-Ps = roundn(Ps,-6); % precision adjust
-figure(1)
-hold on
-pB1 = [1 0 0 0
-    0 1 0 0
-    0 0 1 0]';
-plot_elliposoid = 1;
-if plot_elliposoid ==1
-    for i=1:Max_t
-        EE(i) = ellipsoid(xx(taus(i)),Ps(:,:,Max_t-i+1));
-        % projection the ellipsoid to different basis
-        EE1(i) = projection(EE(i),pB1);
-        plot(EE1(i))
-        drawnow;
-        frame(i)=getframe(gcf);
-    end
-    writegif('test1.gif',frame,0.1);
+options.controller_deg = 1;                 % Degree of polynomial controller to search for
+options.clean_tol = 1e-3;                   % tolerance for cleaning small terms
+options.backoff_percent = 5;                % 1 percent backing off
+options.degL1 = 4;                          % Chosen to do degree matching deg(Vdot{1},x);
+options.degLu = options.controller_deg - 1;
+options.degLu1 = 2;
+options.degLu2 = 2;
+options.degLup = 2;
+options.degLum = 2;
+options.saturations = 0;
+options.plot_rho = 1;
+%% slove the funnel of system
+% regionOfAttraction
+% V = regionOfAttraction_levelSetMethodYalmip(V0,f,A,ts,options);
+if sys.SetVariable.ROAflag == 1
+%     sampling-based method to solve Funnel%
+    [V,rho] = SampleReachabilityFunnel(sys,V,taus,options);
+else
+%     sampling-based method to solve Funnel
+    [V,rho] = myReachabilityFunnel(sys,V,taus,options);
 end
+disp('The funnel have done');
+%%
+% load('datafunnel0122.mat','rho')
+save datafunnel20170210
+V = V.updateV(foh(taus,1./rho'));
+%%
+figure
+options.plotdims=[1 2];
+options.inclusion='slice';
+options.x0 = sys.FunTraj;
+VFrame = V.inFrame(sys.FunTraj);
+plot_myFunnel(sys,VFrame,options);
+Vtrim = ShrinkFunnelwithObstacles(sys,VFrame);
 
-c = 3;
-rhot = exp(c*(taus-max(taus))/(max(taus)-min(taus)));
-rhopp = interp1(taus,rhot,'linear','pp');
-% lagrange_multipliers
+%% Gaussian programming
+% Vtrim = GMPLdatabase(sys.FunTraj,Vtrim);
+%% =============end==============
 
 
 
-% % not bad direction(dimensions are less than 3)
-% RA1 = minkdiff(EE2,EE1);
-% RA2 = minkdiff(FE2,FE1);
-% RA = [RA1;RA2];
-% 
-% for i=1:size(RA,2)
-%     EEE = minkdiff_ia(E2,E1,RA(:,i));
-%     EEF = minkdiff_ea(E2,E1,RA(:,i));
-% end
 
 

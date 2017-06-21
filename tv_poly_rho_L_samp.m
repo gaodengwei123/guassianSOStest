@@ -13,5 +13,5 @@ function [gamma,L] = tv_poly_rho_L_samp(t,x,ti,rho,rhodot,V,Vdot)
     prog = sedumi(prog,gamma,0);
     
     gamma = double(prog(gamma));
-    L = prog([ L1]);
+    L = prog([L1]);
 end

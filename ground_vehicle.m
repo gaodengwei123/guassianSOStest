@@ -1,99 +1,66 @@
-%% ==============ground Vehicle model=============================
+%% ==============ground Vehicle model==============================
 clear all
+close all
+% close all
 clc
-global INPUTS
-
-eps = 1e-10;
-timenow = 0;
-% simulantion total step
-end_step = 300;
-% simulantion step
-temp = 1;
-n = 4;   % Number of States
-m = 1; % Number of Inputs
-%% ======================dynamic model============================
-% pvar x1 x2 x3 x4 u t;
-% x = [x1,x2,x3,x4]';
-% Xu = 20.55;
-% Yv = 5.0326;
-% Nr = 0.05;
-% Izz = 0.02532;
-% B = @(t)[zeros(3);eye(3)];
-%% canstant set
-INPUTS.speed = 10;
-INPUTS.obstacle = [10 30
-                   30 40
-                   25 20];
-INPUTS.obstacleRadius = 5;
+dbstop if error
+global Gaussiangao
+Gaussiangao = 1;
 
 % show the equation in local_controlDae
-f = @(t,x,u)[INPUTS.speed*pcos(x(3))
-             INPUTS.speed*psin(x(3))
-             x(4)
-             u];
-% inital state node
-U_int(:,1) = 0;   % control law
+%% ================================================================
+% 1; 2VideoRay2D: is underwater vehicle£»3 Sapcecraft: is the spacecraft tracking;4 VideoRay3D
+% -------------------------------------------------------------------------
+dynamic_mark = 1;
+switch (dynamic_mark)
+    case 1  %car: is ground vehicle
+        sys = CarDynamic();
+    case 2  %VideoRay2D: is underwater vehicle
+        sys = VideoRay2DDynamic();
+    case 3  %Sapcecraft: is the spacecraft tracking
+        sys = SapcecraftDynamic();
+    case 4  %VideoRay3D: is underwater vehicle
+        sys = VideoRay3DDynamic();
+end
 
-% start point
-OL_state(:,1) = [0;0;0;0];
-% terminal point
-INPUTS.state_goal = [50;40;1;0];
-INPUTS.limit_x1_min = 0;
-INPUTS.limit_x2_min = 0;
-INPUTS.limit_x3_min = -pi;
-INPUTS.limit_x4_min = -pi;
-INPUTS.umin = -pi;
-INPUTS.limit_x1_max = 50;
-INPUTS.limit_x2_max = 50;
-INPUTS.limit_x3_max = pi;
-INPUTS.limit_x4_max = pi;
-INPUTS.umax = pi;
-% cost function Q and R also be used in local_controlCost
-INPUTS.Q = @(t)eye(n);
-INPUTS.R = @(t)10*eye(m);
+%% inital state points
+OL_state(:,1) = sys.INPUTS.state_initial;           % start point
+U_int(:,1) = zeros(sys.getNumInput,1);              % initialize control law
 
-%% =================open loop nominal trajectory===================
-[OL_state,OL_control,OL_time] = optimal_local_programming(OL_state(:,1),INPUTS.state_goal);
-statefun1 = spline(OL_time,OL_state');
-statefun = @(t) ppval(statefun1,t);
-controlfun1 = spline(OL_time,OL_control');
-controlfun = @(t) ppval(controlfun1,t);
-Maxinterval = [0 max(OL_time)]; % cost time
-[rho0, Ppp, upp, K0] = Invariant_Funnels(f,statefun,controlfun,Maxinterval);
+current_ell = ellipsoid(OL_state(:,1),diag(sys.INPUTS.noise_w.^2));
+currentq = OL_state(:,1);
+
+%% ===================================trajectory===================
+
+if 1
+    %% GPOPS to solve the open-loop trajectory and control
+    [sys,OL_state,OL_control,OL_time] = optimal_local_programming(sys, OL_state(:,1), current_ell);
+    sys = sys.updateNominal(OL_time,OL_state,OL_control);   % set the sys trajectory to ploynominal form
+    %% LQR initialized to calculate the ROA in every nonminal points
+    [Funnel_V, sysploy] = Invariant_Funnels(sys);
+%     save datavehicle20170123
+else
+    %     load('videoRayTrajectory.mat')
+    %     load('carTrajectory.mat')
+    %     load('test1.mat')
+    %     load('test2.mat')
+    load('datavehicle20170123.mat')
+end
+% nominal in PRM node
+% prmSHOW = PRMnominal(sys);
+
+% figure
+% show(sys.PlotObj.prmSimple)
+% v1 = sys.PlotObj.prmSimple.getEdges();
+%     Funnel_V = GMPLdatabase(sysploy,Funnel_V);
+%     figure
+%     options.plotdims=[1 2];
+%     options.inclusion='slice';
+%     options.x0 = sysploy.FunTraj;
+%     VFrame = Funnel_V.inFrame(sysploy.FunTraj);
+%     plot_myFunnel(sysploy,VFrame,options);
+%     current_ell = MLFnoise(sysploy,Funnel_V);
+current_ell = Pontryagin_set_difference(sysploy,Funnel_V);
 
 
 %% ===================end =======================================
-
-%% ==========================guss learning processing=======================
-GMPLprogama
-%% ===================assignment claculate==================================
-for i=1:1000
-    % extend kalman filter
-    %     [dert_x,x1,P1] = kalman_filter(x10,C,D,inv_MS,J_n,ROV,real_Z,Q,R,P0,temp,i);
-    %     set_membership
-    
-    
-end
-
-
-% plot figure
-figure
-th = linspace(-pi,pi,100);
-ell = S0(1:2,1:2)^(-1/2)*[cos(th) ; sin(th)];
-fill(ell(1,:),ell(2,:),0.8*ones(1,3))
-
-figure
-plot3(statedint(1,:),statedint(2,:),statedint(3,:),'r')
-[C,h] = pcontour(V,0.093);  % plot ROA
-hold on
-plot3(x0(1,:),x0(2,:),x0(3,:))
-grid on
-figure
-plot(U_body(1,:))
-hold on
-plot(U_body(2,:),'y')
-plot(U_body(3,:),'r')
-plot(U_body(4,:),'k')
-save g2
-save par_state2
-save control_gain2
