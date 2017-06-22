@@ -8,7 +8,5 @@ function [ts,Ss] = tv_lyapunov(tspan,A,Q,Qf)
     if size(Qf) ~= [n n], error('Qf must be n-by-n'); end
     if size(Q(t0)) ~= [n n], error('Q must be n-by-n'); end
 
-    [ts,Ss] = matrixODE(@ode45,...
-                        @(t,S) -A(t)'*S-S*A(t)-Q(t),...
-                        fliplr(tspan),Qf);
+    [ts,Ss] = matrixODE(@ode45,@(t,S)-A(t)'*S-S*A(t)-Q(t),fliplr(tspan),Qf);
 end
